@@ -1,0 +1,86 @@
+name: Sign Firefox XPI
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/sign-firefox.yml
+permissions:
+  contents: read
+concurrency:
+  group: firefox-sign-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check Mozilla signing credentials
+        id: credentials
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -z "$AMO_JWT_ISSUER" ] || [ -z "$AMO_JWT_SECRET" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Not signed: configure AMO_JWT_ISSUER and AMO_JWT_SECRET in repository Actions secrets, then run this workflow again."
+            echo "No signing request was submitted. Add the two Mozilla API secrets and rerun this workflow." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.credentials.outputs.ready == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          node-version: '24'
+      - name: Test and prepare Firefox package
+        if: steps.credentials.outputs.ready == 'true'
+        run: |
+          make test
+          make firefox
+          npm install --prefix "$RUNNER_TEMP/ipvfoo-sign-tools" --ignore-scripts web-ext@10.7.0
+      - name: Submit for Mozilla unlisted signing
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          "$RUNNER_TEMP/ipvfoo-sign-tools/node_modules/.bin/web-ext" sign \
+            --source-dir src \
+            --artifacts-dir build/signed \
+            --channel unlisted \
+            --ignore-files 'manifest/**' \
+            --timeout 300000 \
+            --approval-timeout 1800000 \
+            --no-input \
+            --no-config-discovery
+      - name: Verify signed package matches the tested extension
+        if: steps.credentials.outputs.ready == 'true'
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import zipfile
+          manifest = json.loads(pathlib.Path('src/manifest/firefox-manifest.json').read_text())
+          unsigned_path = pathlib.Path('build') / f"ipvfoo-{manifest['version']}.xpi"
+          signed_paths = list(pathlib.Path('build/signed').glob('*.xpi'))
+          if len(signed_paths) != 1:
+              raise SystemExit('Expected exactly one signed XPI; no installable artifact will be uploaded.')
+          with zipfile.ZipFile(unsigned_path) as unsigned, zipfile.ZipFile(signed_paths[0]) as signed:
+              if signed.testzip() is not None:
+                  raise SystemExit('Signed XPI is corrupt.')
+              names = {name.lower() for name in signed.namelist()}
+              if not {'meta-inf/mozilla.rsa', 'meta-inf/mozilla.sf', 'meta-inf/manifest.mf'} <= names:
+                  raise SystemExit('Mozilla signature files are missing.')
+              for item in unsigned.infolist():
+                  if not item.is_dir() and signed.read(item.filename) != unsigned.read(item.filename):
+                      raise SystemExit(f'Signed payload differs from the tested package: {item.filename}')
+          print('Mozilla signature files present; extension payload matches the tested Firefox package.')
+          PY
+      - name: Upload signed Firefox XPI
+        if: steps.credentials.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipvfoo-enhanced-firefox-signed
+          path: build/signed/*.xpi
+          if-no-files-found: error

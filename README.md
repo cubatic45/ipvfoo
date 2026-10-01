@@ -37,6 +37,27 @@ The default provider is [ipwho.is](https://ipwhois.io/documentation), using HTTP
 without an API token. Its limits and availability are controlled by the service.
 The extension backs off on HTTP 429 and keeps showing captured IPs if a query fails.
 
+## Firefox signing
+
+The **Sign Firefox XPI** workflow submits the Firefox build to Mozilla using the
+`unlisted` self-distribution channel, then downloads and uploads the signed XPI as
+`ipvfoo-enhanced-firefox-signed`. It does not publish a public AMO store listing.
+
+Generate an issuer and secret at [Mozilla API credentials](https://addons.mozilla.org/developers/addon/api/key/)
+and save them as repository Actions secrets named `AMO_JWT_ISSUER` and `AMO_JWT_SECRET`.
+Do not commit credentials or paste secrets into issue bodies or workflow inputs.
+Then run the workflow on `feat/ip-ownership-cdn`:
+
+```sh
+gh workflow run sign-firefox.yml --repo cubatic45/ipvfoo --ref feat/ip-ownership-cdn
+```
+
+If credentials are missing, the workflow reports **not signed** and submits nothing.
+A signed artifact is uploaded only after Mozilla returns an XPI with signature files
+and the package payload matches the tested Firefox build. Mozilla may hold a submission
+for review; a pending or failed job is not a signed release. After installing a signed
+version, each new submission needs a new extension version number.
+
 ## Custom metadata service
 
 Set an HTTPS URL with `{ip}` in the path or query, for example:
