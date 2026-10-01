@@ -39,8 +39,15 @@ jobs:
           make test
           make firefox
           npm install --prefix "$RUNNER_TEMP/ipvfoo-sign-tools" --ignore-scripts web-ext@10.7.0
-      - name: Submit for Mozilla unlisted signing
+      - name: Download an already signed version if available
+        id: existing
         if: steps.credentials.outputs.ready == 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: node tools/download-signed-firefox.mjs
+      - name: Submit for Mozilla unlisted signing
+        if: steps.credentials.outputs.ready == 'true' && steps.existing.outputs.downloaded != 'true'
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
@@ -73,7 +80,18 @@ jobs:
               if not {'meta-inf/mozilla.rsa', 'meta-inf/mozilla.sf', 'meta-inf/manifest.mf'} <= names:
                   raise SystemExit('Mozilla signature files are missing.')
               for item in unsigned.infolist():
-                  if not item.is_dir() and signed.read(item.filename) != unsigned.read(item.filename):
+                  if item.is_dir():
+                      continue
+                  actual = signed.read(item.filename)
+                  expected = unsigned.read(item.filename)
+                  if item.filename == 'manifest.json':
+                      # Mozilla may reformat JSON; all manifest values must match.
+                      actual = json.loads(actual)
+                      expected = json.loads(expected)
+                  if actual != expected:
+                      if item.filename == 'manifest.json':
+                          print('Signed manifest:', json.dumps(actual, sort_keys=True))
+                          print('Expected manifest:', json.dumps(expected, sort_keys=True))
                       raise SystemExit(f'Signed payload differs from the tested package: {item.filename}')
           print('Mozilla signature files present; extension payload matches the tested Firefox package.')
           PY

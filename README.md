@@ -55,8 +55,8 @@ gh workflow run sign-firefox.yml --repo cubatic45/ipvfoo --ref feat/ip-ownership
 If credentials are missing, the workflow reports **not signed** and submits nothing.
 A signed artifact is uploaded only after Mozilla returns an XPI with signature files
 and the package payload matches the tested Firefox build. Mozilla may hold a submission
-for review; a pending or failed job is not a signed release. After installing a signed
-version, each new submission needs a new extension version number.
+for review; a pending or failed job is not a signed release. An already approved version is downloaded again on reruns instead of being resubmitted.
+A new extension submission needs a new version number.
 
 ## Custom metadata service
 
