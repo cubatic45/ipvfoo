@@ -21,6 +21,7 @@ limitations under the License.
 const IS_CHROMIUM = !!chrome.runtime.getManifest().background.service_worker;
 
 window.onload = async () => {
+  setupMetadataOptions();
   const ipv4pages = document.getElementById("ipv4pages");
   for (const domain of IPV4_ONLY_DOMAINS.keys()) {
     const li = document.createElement("li");
@@ -134,6 +135,7 @@ window.onload = async () => {
 
   document.getElementById("revert_btn").onclick = function() {
     revertNAT64();
+    chrome.storage.local.set(ENRICHMENT_DEFAULTS).then(() => applyMetadataOptions(ENRICHMENT_DEFAULTS));
     chrome.runtime.sendMessage({setStorageSyncDebounce: DEFAULT_SYNC_OPTIONS});
     applyOptionsToPage(DEFAULT_SYNC_OPTIONS);
   };
@@ -162,3 +164,49 @@ window.onload = async () => {
     });
   }
 };
+
+
+function applyMetadataOptions(o) {
+  for (const [key, value] of Object.entries(ENRICHMENT_DEFAULTS)) {
+    const field = document.getElementById(key);
+    if (typeof value === "boolean") field.checked = o[key];
+    else field.value = o[key];
+  }
+}
+
+async function setupMetadataOptions() {
+  await optionsReady;
+  applyMetadataOptions(options);
+  const grantedPermissions = await chrome.permissions.getAll();
+  const status = document.getElementById("metadata_status");
+  document.getElementById("save_metadata").onclick = async () => {
+    try {
+      const settings = {};
+      for (const [key, value] of Object.entries(ENRICHMENT_DEFAULTS)) {
+        const field = document.getElementById(key);
+        settings[key] = typeof value === "boolean" ? field.checked : field.value.trim();
+      }
+      settings.metadataTtlDays = Number(settings.metadataTtlDays);
+      if (!Number.isInteger(settings.metadataTtlDays) || settings.metadataTtlDays < 1 || settings.metadataTtlDays > 30) {
+        throw new Error("Cache TTL must be 1–30 days.");
+      }
+      const url = settings.metadataProvider === "custom" ?
+          IPvFooEnrichment.endpointUrl(settings.metadataEndpoint, "8.8.8.8") : new URL("https://ipwho.is/");
+      if (settings.enrichmentEnabled) {
+        // Request only the selected origin, from the user's Save click.
+        const request = {origins: [`${url.origin}/*`]};
+        if (!IS_CHROMIUM && grantedPermissions.data_collection) request.data_collection = ["browsingActivity"];
+        const granted = await chrome.permissions.request(request);
+        if (!granted) throw new Error("Permission was not granted; settings were not saved.");
+      }
+      await chrome.storage.local.set(settings);
+      status.textContent = "Settings saved.";
+    } catch (error) { status.textContent = error.message; }
+  };
+  document.getElementById("clear_metadata").onclick = async () => {
+    try {
+      const result = await chrome.runtime.sendMessage({clearMetadataCache: true});
+      status.textContent = result?.ok ? "Ownership cache cleared." : "Could not clear cache.";
+    } catch { status.textContent = "Could not clear cache."; }
+  };
+}

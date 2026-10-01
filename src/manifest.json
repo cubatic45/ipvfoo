@@ -1,9 +1,9 @@
 {
-  "name": "IPvFoo",
+  "name": "IPvFoo Enhanced",
   "manifest_version": 3,
-  "version": "2.35",
-  "description": "Display the server IP address, with a realtime summary of IPv4, IPv6, and HTTPS information across all page elements.",
-  "homepage_url": "https://github.com/pmarks-net/ipvfoo",
+  "version": "2.36.0",
+  "description": "Display actual connection IPs with optional ASN, organization, country and evidence-based CDN detection.",
+  "homepage_url": "https://github.com/cubatic45/ipvfoo",
   "icons": {
     "16": "icon16.png",
     "128": "icon128.png"

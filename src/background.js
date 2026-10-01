@@ -41,7 +41,19 @@ const IS_CHROMIUM = !!chrome.runtime.getManifest().background.service_worker;
 if (IS_CHROMIUM) {
   // This only runs on Chrome.
   // Firefox uses manifest.json/background/scripts instead.
-  importScripts("iputil.js", "common.js");
+  importScripts(
+      "iputil.js",
+      "common.js",
+      "enrichment/private_ip.js",
+      "enrichment/cdn/headers.js",
+      "enrichment/cdn/asn_rules.js",
+      "enrichment/cdn/detect.js",
+      "enrichment/provider.js",
+      "enrichment/providers/default.js",
+      "enrichment/providers/custom.js",
+      "enrichment/cache.js",
+      "enrichment/index.js",
+  );
 }
 
 // Possible states for an instance of TabInfo.
@@ -351,7 +363,7 @@ class TabInfo extends SaveableEntry {
     this.save();
   }
 
-  addDomain(domain, dflags, addr, aflags) {
+  addDomain(domain, dflags, addr, aflags, signals = []) {
     let d = this.domains[domain];
     if (!d) {
       // Limit the number of domains per page, to avoid wasting RAM.
@@ -361,6 +373,7 @@ class TabInfo extends SaveableEntry {
       }
       d = this.domains[domain] =
           new DomainInfo(this, domain, addr || "(lost)", dflags | aflags);
+      d.signals = signals;
       d.countUp();
     } else {
       const oldAddr = d.addr;
@@ -376,8 +389,11 @@ class TabInfo extends SaveableEntry {
         d.flags = (d.flags & DFLAG_MASK) | aflags;
       }
       d.countUp();
+      const oldSignals = JSON.stringify(d.signals);
+      if (d.addr !== oldAddr) d.signals = [];
+      if (addr === d.addr) d.signals = [...new Set([...d.signals, ...signals])].sort();
       // Don't update if nothing has changed.
-      if (d.addr == oldAddr && d.flags == oldFlags) {
+      if (d.addr == oldAddr && d.flags == oldFlags && JSON.stringify(d.signals) === oldSignals) {
         return;
       }
     }
@@ -474,8 +490,9 @@ class TabInfo extends SaveableEntry {
         mainTuple[1] = d.addr;
         mainTuple[2] = d.addrVersion();
         mainTuple[3] = d.flags;
+        mainTuple[4] = d.signals;
       } else {
-        tuples.push([domain, d.addr, d.addrVersion(), d.flags]);
+        tuples.push([domain, d.addr, d.addrVersion(), d.flags, d.signals]);
       }
     }
     return tuples;
@@ -488,7 +505,7 @@ class TabInfo extends SaveableEntry {
       // Perhaps this.domains was cleared during the request's lifetime.
       return null;
     }
-    return [domain, d.addr, d.addrVersion(), d.flags];
+    return [domain, d.addr, d.addrVersion(), d.flags, d.signals];
   }
 }
 
@@ -497,6 +514,8 @@ class DomainInfo {
   domain;
   addr;
   flags;
+
+  signals = []; // Contextual CDN evidence for the displayed connection IP.
 
   count = 0;  // count of active requests
   inhibitZero = false;
@@ -510,12 +529,14 @@ class DomainInfo {
 
   // count and DFLAG_CONNECTED will be computed from requestMap.
   toJSON() {
-    return [this.addr, this.flags & ~DFLAG_CONNECTED];
+    return [this.addr, this.flags & ~DFLAG_CONNECTED, this.signals];
   }
 
   static fromJSON(tabInfo, domain, json) {
-    const [addr, flags] = json;
-    return new DomainInfo(tabInfo, domain, addr, flags);
+    const [addr, flags, signals = []] = json;
+    const entry = new DomainInfo(tabInfo, domain, addr, flags);
+    entry.signals = signals;
+    return entry;
   }
 
   addrVersion() {
@@ -675,12 +696,47 @@ function lookupOriginMap(origin) {
   }
 })();
 
-chrome.runtime.onMessage.addListener((message) => {
+const metadataService = new IPvFooEnrichment.LookupService(
+    new IPvFooEnrichment.MetadataCache(chrome.storage.local));
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const senderUrl = sender.url?.split("#")[0];
+  if (sender.id !== chrome.runtime.id) return;
+  if (message.lookupMetadata && senderUrl === chrome.runtime.getURL("popup.html")) {
+    (async () => {
+      await storageReady;
+      // The caller supplies only the IP, never the endpoint or settings.
+      const tab = tabMap[Number(message.tabId)];
+      if (!tab || !Object.values(tab.domains).some(d => d.addr === message.lookupMetadata)) {
+        return {status: "invalid"};
+      }
+      if (!IS_CHROMIUM && options.enrichmentEnabled) {
+        const permissions = await chrome.permissions.getAll();
+        if (permissions.data_collection && !permissions.data_collection.includes("browsingActivity")) {
+          return {status: "disabled"};
+        }
+      }
+      return metadataService.lookupIp(message.lookupMetadata, {...options});
+    })().then(sendResponse, () => sendResponse({status: "unavailable"}));
+    return true;
+  }
+  if (message.clearMetadataCache && senderUrl === chrome.runtime.getURL("options.html")) {
+    metadataService.cancel();
+    metadataService.cache.clear().then(() => sendResponse({ok: true}), () => sendResponse({ok: false}));
+    return true;
+  }
   if (message.hasOwnProperty("darkModeOffscreen")) {
     setColorIsDarkMode(REGULAR_COLOR, message.darkModeOffscreen);
   }
-  if (message.hasOwnProperty("setStorageSyncDebounce")) {
+  if (senderUrl === chrome.runtime.getURL("options.html") && message.hasOwnProperty("setStorageSyncDebounce")) {
     storageSyncDebouncer.set(message.setStorageSyncDebounce);
+  }
+});
+
+chrome.permissions.onRemoved.addListener(permissions => {
+  metadataService.cancel();
+  if (permissions.data_collection?.includes("browsingActivity")) {
+    chrome.storage.local.set({enrichmentEnabled: false});
   }
 });
 
@@ -1111,9 +1167,10 @@ chrome.webRequest.onResponseStarted.addListener(wrap(async (details) => {
   requestInfo.domain = parsed.domain;
   requestInfo.save();
   for (const tabInfo of tabInfos) {
-    tabInfo.addDomain(parsed.domain, dflags, addr, aflags);
+    tabInfo.addDomain(parsed.domain, dflags, addr, aflags,
+      IPvFooEnrichment.headerSignals(details.responseHeaders));
   }
-}), FILTER_ALL_URLS);
+}), FILTER_ALL_URLS, ["responseHeaders"]);
 
 const forgetRequest = wrap(async (details) => {
   await storageReady;
@@ -1155,6 +1212,9 @@ chrome.contextMenus?.onClicked.addListener((info, tab) => {
 watchOptions(async (optionsChanged) => {
   await storageReady;
   optionsChanged = new Set(optionsChanged);
+  if (["enrichmentEnabled", "metadataProvider", "metadataEndpoint", "metadataTtlDays"].some(k => optionsChanged.has(k))) {
+    metadataService.cancel();
+  }
   for (const tabInfo of Object.values(tabMap)) {
     let refreshPageAction = optionsChanged.has(tabInfo.color);
     if (optionsChanged.has(NAT64_KEY)) {

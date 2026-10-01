@@ -163,7 +163,22 @@ const NAT64_DEFAULTS = new Set([
 ]);
 
 let _watchOptionsFunc = null;
+const ENRICHMENT_DEFAULTS = {
+  enrichmentEnabled: false,
+  metadataProvider: "default",
+  metadataEndpoint: "",
+  metadataTtlDays: 7,
+  showAsn: true,
+  showOrganization: true,
+  showCountry: true,
+  showCdn: true,
+  cdnHeaders: true,
+  cdnAsn: true,
+  cdnHost: true,
+};
+
 const DEFAULT_LOCAL_OPTIONS = {
+  ...ENRICHMENT_DEFAULTS,
   [REGULAR_COLOR]: "",  // default replaced on first boot.
   [INCOGNITO_COLOR]: "lightfg",
   [SAW_HTTP_GT_1]: false,

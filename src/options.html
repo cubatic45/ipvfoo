@@ -99,10 +99,44 @@ limitations under the License.
   </style>
   <script src="iputil.js"></script>
   <script src="common.js"></script>
+<script src="enrichment/private_ip.js"></script>
+  <script src="enrichment/provider.js"></script>
   <script src="options.js"></script>
 </head>
 
 <body>
+  <section id="metadata-options">
+    <h1>IP ownership and CDN</h1>
+    <p>Ownership lookup is off by default. When enabled, opening a popup sends public connection IPs
+    to the selected service. Private and special-use addresses are never queried. CDN header and host
+    detection works locally even when lookup is off. ASN indicates network ownership; CDN labels are estimates.</p>
+    <label><input type="checkbox" id="enrichmentEnabled"> Enable IP ownership lookup</label><br>
+    <p>Show:
+      <label><input type="checkbox" id="showAsn"> ASN</label>
+      <label><input type="checkbox" id="showOrganization"> Organization</label>
+      <label><input type="checkbox" id="showCountry"> Country</label>
+      <label><input type="checkbox" id="showCdn"> CDN provider</label>
+    </p>
+    <p>CDN detection:
+      <label><input type="checkbox" id="cdnHeaders"> Response headers</label>
+      <label><input type="checkbox" id="cdnAsn"> ASN</label>
+      <label><input type="checkbox" id="cdnHost"> Request hostname</label>
+    </p>
+    <label>Metadata provider:
+      <select id="metadataProvider"><option value="default">ipwho.is (no token)</option><option value="custom">Custom HTTPS endpoint</option></select>
+    </label><br><br>
+    <label>Custom endpoint (use {ip} in the path or query):
+      <input id="metadataEndpoint" type="url" class="url-field" placeholder="https://internal.example.com/ip-info?ip={ip}">
+    </label>
+    <p>Custom JSON: asn (number), asnOrg, countryCode (two uppercase letters), countryName.
+    Fields may be omitted; at least one must be present. Responses are limited to 64 KiB with a 5 second timeout.
+    Cookies and redirects are disabled. These settings stay in this browser.</p>
+    <label>Cache TTL: <input id="metadataTtlDays" type="number" min="1" max="30" value="7"> days</label>
+    <p><button id="save_metadata">Save ownership settings</button>
+       <button id="clear_metadata">Clear ownership cache</button></p>
+    <p id="metadata_status" role="status"></p>
+  </section>
+
   <div id="lookup-provider">
     <h1>Lookup providers</h1>
     Use this service from the popup context menu:<br>

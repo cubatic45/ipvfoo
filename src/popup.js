@@ -253,6 +253,7 @@ function scrollbarHack() {
 // Copy the contents of src into dst, making minimal changes.
 function minimalCopy(src, dst) {
   dst.className = src.className;
+  dst._tuple = src._tuple;
   for (let s = src.firstChild, d = dst.firstChild, sNext, dNext;
        s && d;
        s = sNext, d = dNext) {
@@ -391,6 +392,9 @@ function makeRow(isFirst, tuple) {
     cacheTd.style.paddingLeft = '0';
   }
 
+  const info = makeMetadata(domain, addr, tuple[4] || []);
+  addrTd.appendChild(info);
+  tr._tuple = tuple;
   tr._domain = domain;
   tr.appendChild(domainTd);
   tr.appendChild(addrTd);
@@ -525,3 +529,68 @@ function selectAddress(node, target, sel) {
     sel.addRange(findSelectMe(node, target));
   }
 }
+
+
+const metadataResults = new Map();
+let metadataEpoch = 0;
+
+function requestMetadata(ip) {
+  if (metadataResults.has(ip)) return;
+  metadataResults.set(ip, {status: "loading"});
+  const epoch = metadataEpoch;
+  chrome.runtime.sendMessage({lookupMetadata: ip, tabId}).catch(() => ({status: "unavailable"})).then(result => {
+    if (epoch !== metadataEpoch) return;
+    metadataResults.set(ip, result || {status: "unavailable"});
+    for (const row of [...table.children]) {
+      if (row._tuple[1] === ip) pushOne(row._tuple);
+    }
+    if (IS_MOBILE) zoomHack(); else scrollbarHack();
+  });
+}
+
+function makeMetadata(hostname, ip, signals) {
+  const div = document.createElement("div");
+  div.className = "metadata";
+  div.onclick = div.oncontextmenu = event => event.stopPropagation();
+  const classification = IPvFooEnrichment.classifyIp(ip);
+  if (!classification.valid) return div;
+  if (!classification.public) {
+    div.textContent = "Private / special-use network";
+    return div;
+  }
+  const result = options.enrichmentEnabled ? metadataResults.get(ip) : null;
+  if (options.ready && options.enrichmentEnabled && !result) {
+    // Rows render synchronously. Network activity begins after rendering.
+    queueMicrotask(() => requestMetadata(ip));
+  }
+  const parts = [];
+  if (result?.status === "ok") {
+    if (options.showAsn && result.asn) parts.push(`AS${result.asn}`);
+    if (options.showOrganization && result.asnOrg) parts.push(result.asnOrg);
+    if (options.showCountry && result.countryCode) parts.push(result.countryCode);
+    div.title = result.countryName || "";
+  } else if (options.enrichmentEnabled) {
+    parts.push(result?.status === "unavailable" ? "ASN: unavailable" :
+      result?.status === "disabled" ? "Ownership lookup disabled" : "Looking up ownership…");
+  }
+  if (parts.length) div.appendChild(document.createTextNode(parts.join(" · ")));
+  if (options.showCdn) {
+    const cdn = IPvFooEnrichment.detectCdn({hostname, signals,
+      asn: result?.status === "ok" ? result.asn : null,
+      headersEnabled: options.cdnHeaders, asnEnabled: options.cdnAsn, hostEnabled: options.cdnHost});
+    if (parts.length) div.appendChild(document.createElement("br"));
+    const badge = document.createElement("span");
+    badge.className = "cdn-badge";
+    badge.textContent = `CDN: ${cdn.provider || "unknown"}`;
+    badge.title = `Confidence: ${cdn.confidence}\nDetected by:\n${cdn.reasons.join("\n") || "No matching signals"}`;
+    div.appendChild(badge);
+  }
+  return div;
+}
+
+watchOptions(changed => {
+  if (!changed.some(key => Object.hasOwn(ENRICHMENT_DEFAULTS, key))) return;
+  ++metadataEpoch;
+  metadataResults.clear();
+  if (table) for (const row of [...table.children]) pushOne(row._tuple);
+});

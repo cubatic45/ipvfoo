@@ -172,6 +172,22 @@ img {
   overflow-x: auto;
 }
 
+.metadata {
+  font-family: sans-serif;
+  font-size: 11px;
+  font-weight: normal;
+  color: #666;
+  max-width: 310px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  padding: 3px 0;
+  user-select: text;
+}
+.cdn-badge { display: inline-block; border: 1px solid #888; border-radius: 3px; padding: 1px 4px; }
+.desktop-options { text-align: right; font: 11px sans-serif; margin-top: 5px; }
+.desktop-options a { color: #808080; }
+@media (prefers-color-scheme: dark) { .metadata { color: #bbb; } }
+
 /* dark mode */
 @media (prefers-color-scheme: dark) {
   body {
@@ -227,6 +243,10 @@ img {
 </style>
 <script type="text/javascript" src="iputil.js"></script>
 <script type="text/javascript" src="common.js"></script>
+<script src="enrichment/private_ip.js"></script>
+<script src="enrichment/cdn/headers.js"></script>
+<script src="enrichment/cdn/asn_rules.js"></script>
+<script src="enrichment/cdn/detect.js"></script>
 <script type="text/javascript" src="popup.js"></script>
 </head>
 <body>
@@ -236,6 +256,7 @@ img {
   <div id="spill_count_container">
   &#x22ee; <span id="spill_count">0</span> requests omitted
   </div>
+  <div class="desktop-options"><a href="options.html" target="_blank">Options</a></div>
   <div id="mobile_footer">
     <div id="options_link"><a href="options.html">Options</a></div>
     <img id="pattern_icon_lightfg">

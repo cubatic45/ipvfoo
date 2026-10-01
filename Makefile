@@ -30,3 +30,7 @@ chrome: prepare
 
 clean:
 	rm -rf ${BUILDDIR}
+
+.PHONY: test
+test:
+	node --test tests/*_test.cjs
